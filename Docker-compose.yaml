@@ -1,0 +1,95 @@
+version: "3.11"
+
+services:
+
+  redis:
+    image: redis
+    restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 50M
+        reservations:
+          cpus: '0.25'
+          memory: 20M
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: redis-cli ping
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  db:
+    image: postgres
+    restart: always
+    # set shared memory limit when using docker-compose
+    shm_size: 128mb
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - ./pg_data:/var/lib/postgresql/data/pgdata
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    image: django
+    restart: on-failure
+    build: .
+    tty: true
+    command: bash -c "python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+    env_file:
+      - .env
+    ports:
+      - "8001:8000"
+    volumes:
+      - .:/running
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  telegram_bot:
+    image: telegram_bot
+    build: .
+    command: python manage.py my_bot
+    depends_on:
+      - app
+    restart: on-failure
+
+  celery:
+    image: celery
+    restart: on-failure
+    build: .
+    tty: true
+    command: bash -c "sleep 5 && celery -A config worker -l INFO -P eventlet"
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - app
+
+  celery_beat:
+    image: celery_beat
+    restart: on-failure
+    build: .
+    tty: true
+    command: bash -c "sleep 5 && celery -A config beat -l INFO -S django"
+    env_file:
+      - .env
+    depends_on:
+      - redis
+      - app
+
+volumes:
+  pg_data:
