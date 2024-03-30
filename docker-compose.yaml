@@ -91,5 +91,6 @@ services:
       - redis
       - app
 
+
 volumes:
   pg_data:
